@@ -7,12 +7,14 @@
 
 import { spawnSync } from 'child_process';
 import path = require('path');
+import { getChromiumSysroot, getVSCodeSysroot } from './debian/install-sysroot';
 import { generatePackageDeps as generatePackageDepsDebian } from './debian/calculate-deps';
 import { generatePackageDeps as generatePackageDepsRpm } from './rpm/calculate-deps';
 import { referenceGeneratedDepsByArch as debianGeneratedDeps } from './debian/dep-lists';
 import { referenceGeneratedDepsByArch as rpmGeneratedDeps } from './rpm/dep-lists';
 import { DebianArchString, isDebianArchString } from './debian/types';
 import { isRpmArchString, RpmArchString } from './rpm/types';
+import product = require('../../product.json');
 
 // A flag that can easily be toggled.
 // Make sure to compile the build directory after toggling the value.
@@ -34,13 +36,10 @@ const bundledDeps = [
 	'libffmpeg.so'
 ];
 
-export function getDependencies(packageType: 'deb' | 'rpm', buildDir: string, applicationName: string, arch: string, sysroot?: string): string[] {
+export async function getDependencies(packageType: 'deb' | 'rpm', buildDir: string, applicationName: string, arch: string): Promise<string[]> {
 	if (packageType === 'deb') {
 		if (!isDebianArchString(arch)) {
 			throw new Error('Invalid Debian arch string ' + arch);
-		}
-		if (!sysroot) {
-			throw new Error('Missing sysroot parameter');
 		}
 	}
 	if (packageType === 'rpm' && !isRpmArchString(arch)) {
@@ -56,22 +55,31 @@ export function getDependencies(packageType: 'deb' | 'rpm', buildDir: string, ap
 		return [];
 	}
 
-	const files = findResult.stdout.toString().trimEnd().split('\n');
-
 	const appPath = path.join(buildDir, applicationName);
-	files.push(appPath);
+	const vscodeFiles = findResult.stdout.toString().trimEnd().split('\n');
+	// Add the tunnel binary.
+	vscodeFiles.push(path.join(buildDir, 'bin', product.tunnelApplicationName));
+
+	const runtimeFiles = [];
+	// Add the main executable.
+	runtimeFiles.push(appPath);
 
 	// Add chrome sandbox and crashpad handler.
-	files.push(path.join(buildDir, 'chrome-sandbox'));
-	files.push(path.join(buildDir, 'chrome_crashpad_handler'));
+	runtimeFiles.push(path.join(buildDir, 'chrome-sandbox'));
+	runtimeFiles.push(path.join(buildDir, 'chrome_crashpad_handler'));
 
 	// Generate the dependencies.
-	const dependencies = packageType === 'deb' ?
-		generatePackageDepsDebian(files, arch as DebianArchString, sysroot!) :
-		generatePackageDepsRpm(files);
-
-	// Merge all the dependencies.
-	const mergedDependencies = mergePackageDeps(dependencies);
+	let mergedDependencies: Set<string>;
+	if (packageType === 'deb') {
+		const chromiumSysroot = await getChromiumSysroot(arch as DebianArchString);
+		const vscodeSysroot = await getVSCodeSysroot(arch as DebianArchString);
+		const vscodeDependencies = mergePackageDeps(generatePackageDepsDebian(vscodeFiles, arch as DebianArchString, vscodeSysroot));
+		const runtimeDependencies = mergePackageDeps(generatePackageDepsDebian(runtimeFiles, arch as DebianArchString, chromiumSysroot));
+		mergedDependencies = new Set([...vscodeDependencies, ...runtimeDependencies]);
+	} else {
+		const dependencies = generatePackageDepsRpm([...vscodeFiles, ...runtimeFiles]);
+		mergedDependencies = mergePackageDeps(dependencies);
+	}
 
 	// Exclude bundled dependencies and sort
 	const sortedDependencies: string[] = Array.from(mergedDependencies).filter(dependency => {

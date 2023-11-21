@@ -17,7 +17,6 @@ const task = require('./lib/task');
 const packageJson = require('../package.json');
 const product = require('../product.json');
 const dependenciesGenerator = require('./linux/dependencies-generator');
-const sysrootInstaller = require('./linux/debian/install-sysroot');
 const debianRecommendedDependencies = require('./linux/debian/dep-lists').recommendedDeps;
 const path = require('path');
 const root = path.dirname(__dirname);
@@ -82,8 +81,7 @@ function prepareDebPackage(arch) {
 			function (f) { size += f.isDirectory() ? 4096 : f.contents.length; },
 			async function () {
 				const that = this;
-				const sysroot = await sysrootInstaller.getSysroot(debArch);
-				const dependencies = dependenciesGenerator.getDependencies('deb', binaryDir, product.applicationName, debArch, sysroot);
+				const dependencies = await dependenciesGenerator.getDependencies('deb', binaryDir, product.applicationName, debArch);
 				gulp.src('resources/linux/debian/control.template', { base: '.' })
 					.pipe(replace('@@NAME@@', product.applicationName))
 					.pipe(replace('@@VERSION@@', packageJson.version + '-' + linuxPackageRevision))
